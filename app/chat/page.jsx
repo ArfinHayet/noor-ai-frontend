@@ -25,6 +25,8 @@ function ChatContent() {
     ttsLoadingId,
     ttsPlayingId,
     toggleMessageAudio,
+    summaryLoadingIds,
+    summarizeMessage,
     captchaToken,
     captchaPass,
     verifyCaptchaToken,
@@ -208,7 +210,7 @@ function ChatContent() {
                 </div>
               )}
               {msg.streaming && <TypingDots />}
-              {msg.role === "assistant" && msg.content && (
+              {msg.role === "assistant" && msg.content && !msg.summaryError && (
                 <div
                   style={{
                     display: "flex",
@@ -219,6 +221,38 @@ function ChatContent() {
                     borderTop: `1px solid ${theme.border}`,
                   }}
                 >
+                  {msg.role === "assistant" &&
+                    !msg.isSummary &&
+                    !msg.streaming &&
+                    !msg.summaryCreated &&
+                    msg.content.length >= 2000 && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          summarizeMessage && summarizeMessage(msg);
+                        }}
+                        disabled={summaryLoadingIds.has(msg.id) || (!captchaPass && !captchaToken)}
+                        title={summaryLoadingIds.has(msg.id) ? t("summarizing") : t("summarize")}
+                        aria-label={summaryLoadingIds.has(msg.id) ? t("summarizing") : t("summarize")}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          marginRight: "auto",
+                          background: "transparent",
+                          border: "none",
+                          color: theme.accent,
+                          cursor: summaryLoadingIds.has(msg.id) || (!captchaPass && !captchaToken) ? "not-allowed" : "pointer",
+                          padding: 6,
+                          borderRadius: 8,
+                          fontSize: 12,
+                          opacity: summaryLoadingIds.has(msg.id) || (!captchaPass && !captchaToken) ? 0.65 : 1,
+                        }}
+                      >
+                        <i className={summaryLoadingIds.has(msg.id) ? "pi pi-spinner pi-spin" : "pi pi-align-left"} />
+                        <span>{summaryLoadingIds.has(msg.id) ? t("summarizing") : t("summarize")}</span>
+                      </button>
+                    )}
                   <button
                     onClick={(e) => { e.stopPropagation(); copyMessage && copyMessage(msg.id, msg.content); }}
                     title="Copy message"

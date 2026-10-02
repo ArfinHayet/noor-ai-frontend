@@ -2,7 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useApi } from "@/hooks/useApi";
-import { CHAT_STREAM_URL, CHAT_TTS_URL, TURNSTILE_PASS_URL } from "@/lib/constants";
+import { CHAT_STREAM_URL, CHAT_SUMMARIZE_STREAM_URL, CHAT_TTS_URL, TURNSTILE_PASS_URL } from "@/lib/constants";
 import { TRANSLATIONS } from "@/lib/translations";
 import { useLocale } from "@/context/LocaleContext";
 
@@ -75,6 +75,7 @@ export function ChatProvider({ children }) {
   const [captchaResetKey, setCaptchaResetKey] = useState(0);
   const [ttsLoadingId, setTtsLoadingId] = useState(null);
   const [ttsPlayingId, setTtsPlayingId] = useState(null);
+  const [summaryLoadingIds, setSummaryLoadingIds] = useState(() => new Set());
 
   const bottomRef = useRef(null);
   const scrollThrottleRef = useRef(0);
@@ -82,6 +83,8 @@ export function ChatProvider({ children }) {
   const abortRef = useRef(null);
   const ttsAudioRef = useRef(null);
   const ttsUrlCacheRef = useRef(new Map());
+  const summaryLoadingIdsRef = useRef(new Set());
+  const summaryAbortControllersRef = useRef(new Map());
 
   const copyMessage = useCallback(async (id, text) => {
     try {
@@ -121,7 +124,14 @@ export function ChatProvider({ children }) {
     setTtsLoadingId(null);
   }, [stopTtsAudio]);
 
-  useEffect(() => () => revokeTtsAudio(), [revokeTtsAudio]);
+  useEffect(
+    () => () => {
+      revokeTtsAudio();
+      summaryAbortControllersRef.current.forEach((controller) => controller.abort());
+      summaryAbortControllersRef.current.clear();
+    },
+    [revokeTtsAudio],
+  );
 
   const playTtsUrl = useCallback(
     async (messageId, url) => {
@@ -425,6 +435,156 @@ export function ChatProvider({ children }) {
     [captchaPass, captchaToken, input, isLoading, request, userId, t],
   );
 
+  const summarizeMessage = useCallback(
+    async (message) => {
+      const sourceText = String(message?.content ?? "").trim();
+      if (
+        message?.role !== "assistant" ||
+        message?.isSummary ||
+        message?.streaming ||
+        message?.summaryCreated ||
+        sourceText.length < 2000 ||
+        summaryLoadingIdsRef.current.has(message.id)
+      ) {
+        return;
+      }
+
+      if (!captchaPass && !captchaToken) {
+        setCaptchaResetKey((current) => current + 1);
+        return;
+      }
+
+      const sourceId = message.id;
+      const summaryId = `summary-${sourceId}`;
+      const controller = new AbortController();
+      summaryLoadingIdsRef.current.add(sourceId);
+      summaryAbortControllersRef.current.set(sourceId, controller);
+      setSummaryLoadingIds((current) => new Set(current).add(sourceId));
+
+      const summaryMessage = {
+        id: summaryId,
+        role: "assistant",
+        content: "",
+        streaming: true,
+        isSummary: true,
+        summaryFor: sourceId,
+      };
+      setMessages((previous) => {
+        const next = [...previous];
+        const existingSummaryIndex = next.findIndex((item) => item.id === summaryId);
+        if (existingSummaryIndex >= 0) {
+          next[existingSummaryIndex] = summaryMessage;
+          return next;
+        }
+
+        const sourceIndex = next.findIndex((item) => item.id === sourceId);
+        if (sourceIndex >= 0) next.splice(sourceIndex + 1, 0, summaryMessage);
+        return next;
+      });
+
+      let contentAcc = "";
+      let streamFailed = false;
+      const updateSummary = (patch) => {
+        setMessages((previous) =>
+          previous.map((item) => (item.id === summaryId ? { ...item, ...patch } : item)),
+        );
+      };
+      const readEventText = (eventText) =>
+        eventText
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.replace(/^data:\s*/, ""))
+          .join("\n")
+          .trim();
+      const handleStreamPayload = (payloadText) => {
+        if (!payloadText || payloadText === "[DONE]") return;
+
+        try {
+          const payload = JSON.parse(payloadText);
+          if (payload.type === "chunk") {
+            contentAcc += payload.text ?? payload.content ?? "";
+            updateSummary({ content: contentAcc });
+            return;
+          }
+
+          if (payload.type === "error") {
+            streamFailed = true;
+            updateSummary({ content: t("summaryError"), streaming: false, summaryError: true });
+          }
+        } catch {
+          contentAcc += payloadText;
+          updateSummary({ content: contentAcc });
+        }
+      };
+
+      try {
+        const response = await request(CHAT_SUMMARIZE_STREAM_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, content: sourceText, captchaToken, captchaPass }),
+          signal: controller.signal,
+          parse: "response",
+        });
+
+        if (!response.body) throw new Error("The summary stream was empty.");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split("\n\n");
+          buffer = events.pop() ?? "";
+          events.map(readEventText).forEach(handleStreamPayload);
+        }
+
+        buffer += decoder.decode();
+        const finalEvent = readEventText(buffer);
+        handleStreamPayload(finalEvent);
+
+        if (!streamFailed && contentAcc.trim()) {
+          updateSummary({ streaming: false });
+          setMessages((previous) =>
+            previous.map((item) => (item.id === sourceId ? { ...item, summaryCreated: true } : item)),
+          );
+        } else if (!streamFailed) {
+          streamFailed = true;
+          updateSummary({ content: t("summaryError"), streaming: false, summaryError: true });
+        }
+      } catch (error) {
+        if (error.status === 400 || error.status === 401) {
+          setCaptchaToken("");
+          setCaptchaPass("");
+          setCaptchaPassExpiresAt("");
+          clearStoredCaptchaPass();
+          setCaptchaResetKey((current) => current + 1);
+        }
+
+        if (error.name !== "AbortError") {
+          streamFailed = true;
+          updateSummary({ content: t("summaryError"), streaming: false, summaryError: true });
+        }
+      } finally {
+        summaryLoadingIdsRef.current.delete(sourceId);
+        if (summaryAbortControllersRef.current.get(sourceId) === controller) {
+          summaryAbortControllersRef.current.delete(sourceId);
+        }
+        setSummaryLoadingIds((current) => {
+          const next = new Set(current);
+          next.delete(sourceId);
+          return next;
+        });
+        if (!captchaPass) {
+          setCaptchaToken("");
+          setCaptchaResetKey((current) => current + 1);
+        }
+      }
+    },
+    [captchaPass, captchaToken, request, t, userId],
+  );
+
   const handleKeyDown = useCallback(
     (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
@@ -445,6 +605,10 @@ export function ChatProvider({ children }) {
 
   const clearChat = useCallback(() => {
     revokeTtsAudio();
+    summaryAbortControllersRef.current.forEach((controller) => controller.abort());
+    summaryAbortControllersRef.current.clear();
+    summaryLoadingIdsRef.current.clear();
+    setSummaryLoadingIds(new Set());
     setMessages([{ id: 0, role: "assistant", content: t("resetMsg"), streaming: false }]);
     setUserId(genUserId());
   }, [revokeTtsAudio, t]);
@@ -463,6 +627,8 @@ export function ChatProvider({ children }) {
       ttsLoadingId,
       ttsPlayingId,
       toggleMessageAudio,
+      summaryLoadingIds,
+      summarizeMessage,
       captchaToken,
       setCaptchaToken,
       captchaPass,
@@ -488,6 +654,8 @@ export function ChatProvider({ children }) {
       ttsLoadingId,
       ttsPlayingId,
       toggleMessageAudio,
+      summaryLoadingIds,
+      summarizeMessage,
       captchaToken,
       captchaPass,
       captchaPassExpiresAt,
