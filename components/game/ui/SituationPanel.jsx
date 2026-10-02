@@ -18,9 +18,11 @@ export function SituationPanel() {
 
   if (!currentScenario) return null;
 
+  const text = currentScenario.situationText || currentScenario.situation || "";
+
   return (
     <div className="game-situation-panel">
-      <p className="game-situation-text">{currentScenario.situation}</p>
+      <p className="game-situation-text">{text}</p>
     </div>
   );
 }

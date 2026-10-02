@@ -751,6 +751,12 @@
     box-shadow: 0 0 30px rgba(0, 0, 0, 0.3);
   }
 
+  .game-panel-area {
+    padding: 0 14px 48px;
+    margin-bottom: 24px;
+    max-height: 75vh;
+  }
+
   .game-splash-title { font-size: 28px; }
   .game-situation-panel { padding: 14px 16px; border-radius: 14px; }
   .game-situation-text { font-size: 14px; }

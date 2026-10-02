@@ -20,13 +20,14 @@ export function ReflectionPanel() {
 
   const virtueKey = `virtue${option.virtue.charAt(0).toUpperCase() + option.virtue.slice(1)}`;
   const translatedVirtue = t(virtueKey) || option.virtue;
+  const reflectionText = option.reflectionText || option.reflection || "";
 
   return (
     <div className="game-reflection-panel">
       <div className="game-reflection-virtue game-reflection-virtue-flash">
         ✦ +{option.delta} {translatedVirtue}
       </div>
-      <p className="game-reflection-text">"{option.reflection}"</p>
+      {reflectionText && <p className="game-reflection-text">"{reflectionText}"</p>}
       <button className="game-continue-btn" onClick={handleContinue}>
         {t("gameContinue")}
       </button>

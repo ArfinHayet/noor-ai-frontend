@@ -1,12 +1,21 @@
 "use client";
 
-import React, { useRef } from "react";
+import React, { useRef, Suspense } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
+import { Sky } from "@react-three/drei";
 import { EndlessRoadWorld } from "./EndlessRoadWorld";
+import { HorizonSun } from "./HorizonSun";
 import { useGame } from "@/context/GameContext";
 
-export function getRoadZForScenario(scenarioIndex) {
-  return -10 - scenarioIndex * 15;
+/**
+ * Calculates continuous Z position along the road based on cumulative global scenario index across all levels.
+ * Level 1: 0-4  => Z: -10 to -70
+ * Level 2: 5-9  => Z: -85 to -145
+ * Level 3: 10-14=> Z: -160 to -220
+ */
+export function getRoadZForScenario(scenarioIndex = 0, level = 1) {
+  const globalIndex = Math.max(0, (level - 1) * 5 + scenarioIndex);
+  return -10 - globalIndex * 15;
 }
 
 function ContinuousWalkingCamera() {
@@ -16,20 +25,20 @@ function ContinuousWalkingCamera() {
   useFrame((rState, delta) => {
     const t = rState.clock.getElapsedTime();
     const scenarioIdx = state.currentScenarioIndex || 0;
+    const level = state.currentLevel || 1;
     const isWalking = state.phase === "loading_scenario" || state.phase === "scene_intro";
 
     // Dynamic FOV scaling for vertical Reel / mobile 9:16 aspect ratios
     const { width, height } = rState.size;
     const aspect = width / height;
     if (aspect < 1.0) {
-      // Expand vertical FOV so 3D scene side environment is fully preserved in Reel aspect ratio
       rState.camera.fov = Math.min(68, Math.max(52, 50 / aspect));
     } else {
       rState.camera.fov = 50;
     }
     rState.camera.updateProjectionMatrix();
 
-    const targetZ = state.phase === "idle" ? 10 : getRoadZForScenario(scenarioIdx);
+    const targetZ = state.phase === "idle" ? 10 : getRoadZForScenario(scenarioIdx, level);
     const walkSpeed = isWalking ? 2.5 : 4.0;
     cameraZRef.current += (targetZ - cameraZRef.current) * Math.min(1, delta * walkSpeed);
 
@@ -52,7 +61,8 @@ function ContinuousWalkingCamera() {
 export function CityScene() {
   const { state } = useGame();
   const scenarioIdx = state.currentScenarioIndex || 0;
-  const milestoneZ = getRoadZForScenario(scenarioIdx);
+  const level = state.currentLevel || 1;
+  const milestoneZ = getRoadZForScenario(scenarioIdx, level);
 
   return (
     <div className="game-canvas">
@@ -60,12 +70,26 @@ export function CityScene() {
         camera={{ position: [0, 2.4, 15], fov: 50 }}
         dpr={typeof window !== "undefined" ? Math.min(2, window.devicePixelRatio) : 1}
         gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
-        onCreated={({ gl }) => {
-          gl.setClearColor("#38bdf8"); // Rich Vibrant Sky Blue matching Reference Image 2!
-        }}
       >
+        {/* Physical Atmospheric Sky Model Aligned with Right-Side Horizon Sun */}
+        <Sky
+          distance={450000}
+          sunPosition={[80, 32, -350]}
+          inclination={0.5}
+          azimuth={0.25}
+          turbidity={4}
+          rayleigh={1.6}
+          mieCoefficient={0.005}
+          mieDirectionalG={0.85}
+        />
+
+        {/* 3D Horizon Sun Disk on Right Side */}
+        <HorizonSun />
+
         <ContinuousWalkingCamera />
-        <EndlessRoadWorld />
+        <Suspense fallback={null}>
+          <EndlessRoadWorld />
+        </Suspense>
 
         {/* Golden Ring on Road at Active Milestone */}
         {state.phase !== "idle" && (
