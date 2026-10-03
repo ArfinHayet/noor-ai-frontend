@@ -87,6 +87,77 @@ function ResponseCell({ response, theme, onSeeMore }) {
   );
 }
 
+function MessageCell({ message, theme, onSeeMore }) {
+  const textRef = useRef(null);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+  const messageText = message || "-";
+
+  useEffect(() => {
+    const element = textRef.current;
+    if (!element) return undefined;
+
+    const checkOverflow = () => {
+      setIsOverflowing(element.scrollHeight > element.clientHeight + 1);
+    };
+
+    checkOverflow();
+
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(checkOverflow);
+      observer.observe(element);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener("resize", checkOverflow);
+    return () => window.removeEventListener("resize", checkOverflow);
+  }, [messageText]);
+
+  return (
+    <td style={{ padding: 14, fontSize: 13, lineHeight: 1.5, width: 300, maxWidth: 300 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 8, minWidth: 0 }}>
+        <span
+          ref={textRef}
+          title={messageText}
+          style={{
+            minWidth: 0,
+            flex: "1 1 auto",
+            display: "-webkit-box",
+            WebkitBoxOrient: "vertical",
+            WebkitLineClamp: 3,
+            overflow: "hidden",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            color: message ? theme.text : theme.textTer,
+          }}
+        >
+          {messageText}
+        </span>
+        {message && isOverflowing && (
+          <button
+            type="button"
+            onClick={() => onSeeMore(message)}
+            aria-label="See full message"
+            style={{
+              border: "none",
+              background: "transparent",
+              color: theme.accent,
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 700,
+              padding: 0,
+              whiteSpace: "nowrap",
+              textDecoration: "underline",
+              textUnderlineOffset: 3,
+            }}
+          >
+            See more
+          </button>
+        )}
+      </div>
+    </td>
+  );
+}
+
 export function ChatHistoryPanel() {
   const { theme } = useTheme();
   const { session } = useAdminSession();
@@ -98,7 +169,7 @@ export function ChatHistoryPanel() {
   const [appliedFilters, setAppliedFilters] = useState({ userId: "", ipAddress: "" });
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsError, setLogsError] = useState("");
-  const [expandedResponse, setExpandedResponse] = useState("");
+  const [expandedContent, setExpandedContent] = useState(null);
   const [ipLookup, setIpLookup] = useState({
     ip: "",
     loading: false,
@@ -178,12 +249,12 @@ export function ChatHistoryPanel() {
   }, []);
 
   useEffect(() => {
-    if (!expandedResponse && !isIpLookupOpen) return undefined;
+    if (!expandedContent && !isIpLookupOpen) return undefined;
 
     const handleKeyDown = (event) => {
       if (event.key === "Escape") {
-        if (expandedResponse) {
-          setExpandedResponse("");
+        if (expandedContent) {
+          setExpandedContent(null);
         } else {
           closeIpLookup();
         }
@@ -192,7 +263,7 @@ export function ChatHistoryPanel() {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closeIpLookup, expandedResponse, isIpLookupOpen]);
+  }, [closeIpLookup, expandedContent, isIpLookupOpen]);
 
   const lookupIpAddress = async (ip) => {
     if (!ip) return;
@@ -388,8 +459,16 @@ export function ChatHistoryPanel() {
                       </button>
                     </td>
                     <td style={{ padding: 14, fontSize: 12 }}>{log.source}</td>
-                    <td style={{ padding: 14, fontSize: 13, lineHeight: 1.5, width: 300, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{log.message}</td>
-                    <ResponseCell response={log.response} theme={theme} onSeeMore={setExpandedResponse} />
+                    <MessageCell
+                      message={log.message}
+                      theme={theme}
+                      onSeeMore={(text) => setExpandedContent({ title: "Full message", text })}
+                    />
+                    <ResponseCell
+                      response={log.response}
+                      theme={theme}
+                      onSeeMore={(text) => setExpandedContent({ title: "Full response", text })}
+                    />
                     <td style={{ padding: 14, fontSize: 12}}>{log.failureReason}</td>
                   </tr>
                 ))
@@ -509,10 +588,10 @@ export function ChatHistoryPanel() {
         </div>
       )}
 
-      {expandedResponse && (
+      {expandedContent && (
         <div
           role="presentation"
-          onClick={() => setExpandedResponse("")}
+          onClick={() => setExpandedContent(null)}
           style={{
             position: "fixed",
             inset: 0,
@@ -527,7 +606,7 @@ export function ChatHistoryPanel() {
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="response-modal-title"
+            aria-labelledby="expanded-content-modal-title"
             onClick={(event) => event.stopPropagation()}
             style={{
               width: "min(720px, 100%)",
@@ -552,12 +631,12 @@ export function ChatHistoryPanel() {
                 background: theme.bgTer,
               }}
             >
-              <h2 id="response-modal-title" style={{ fontSize: 16, margin: 0 }}>
-                Full response
+              <h2 id="expanded-content-modal-title" style={{ fontSize: 16, margin: 0 }}>
+                {expandedContent.title}
               </h2>
               <button
                 type="button"
-                onClick={() => setExpandedResponse("")}
+                onClick={() => setExpandedContent(null)}
                 style={{ ...secondaryButtonStyle, minHeight: 32, padding: "0 10px" }}
               >
                 Close
@@ -574,7 +653,7 @@ export function ChatHistoryPanel() {
                 wordBreak: "break-word",
               }}
             >
-              {expandedResponse}
+              {expandedContent.text}
             </div>
           </div>
         </div>
