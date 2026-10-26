@@ -23,7 +23,7 @@ export function LoginForm() {
     if (!supabase) return;
 
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) router.replace("/admin/chat-history");
+      if (data.session) router.replace("/admin");
     });
   }, [router]);
 
@@ -70,7 +70,7 @@ export function LoginForm() {
         throw new Error(sessionError.message);
       }
 
-      router.replace("/admin/chat-history");
+      router.replace("/admin");
     } catch (loginError) {
       setError(loginError.message || "Unable to sign in.");
       setCaptchaToken("");

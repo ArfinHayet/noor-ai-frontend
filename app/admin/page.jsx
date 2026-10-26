@@ -1,5 +1,9 @@
-import { redirect } from "next/navigation";
+import { DashboardPanel } from "@/components/admin/DashboardPanel";
+
+export const metadata = {
+  title: "Dashboard",
+};
 
 export default function AdminIndexPage() {
-  redirect("/admin/chat-history");
+  return <DashboardPanel />;
 }

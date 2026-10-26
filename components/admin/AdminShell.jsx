@@ -9,6 +9,7 @@ import { useTheme } from "@/context/ThemeContext";
 const AdminSessionContext = createContext({ session: null });
 
 const ADMIN_NAV = [
+  { href: "/admin", label: "Dashboard", icon: "pi-chart-bar" },
   { href: "/admin/chat-history", label: "Chat History", icon: "pi-comments" },
 ];
 
